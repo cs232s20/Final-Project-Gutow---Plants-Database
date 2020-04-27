@@ -1,0 +1,7 @@
+# Default ignored files
+/workspace.xml
+.idea/
+*.pyc
+__pycache__
+*.sqlite
+.DS_Store

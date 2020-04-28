@@ -49,12 +49,14 @@ class PlantsDatabase():
         cur = self.conn.cursor()
         cur.execute('CREATE TABLE Plant(Plant_id INTEGER PRIMARY KEY, '
                     'name TEXT UNIQUE, '
-                    'FOREIGN KEY pH REFERENCES pH (pH)'
+                    'pH INTEGER'
                     'FOREIGN KEY sunlight REFERENCES plots (sunlight)')
-        cur.execute('CREATE TABLE pH(pH INTEGER')
+        cur.execute('CREATE TABLE Fertilizer(fertilizer_id INTEGER PRIMARY KEY, '
+                    'name TEXT UNIQUE, '
+                    'type TEXT)')
         cur.execute('CREATE TABLE plots(plot_id INTEGER PRIMARY KEY, '
-                    'sunlight TEXT, '
-                    'FOREIGN KEY pH references pH (pH)')
+                    'pH INTEGER, '
+                    'sunlight TEXT')
 
     def insert_plant(self, name, pH, sunlight,):
         """
@@ -85,7 +87,7 @@ class PlantsDatabase():
     def get_plant_by_id(self, plant_id):
         """
         Given a plant's primary key, return a dictionary representation of the
-        plant, or None if there is no plannt with that primary key.
+        plant, or None if there is no plant with that primary key.
 
         :param plant_id: the primary key of the plant
         :return: a dict representing the plant
@@ -96,11 +98,28 @@ class PlantsDatabase():
                  'Plant.pH as pH, Plant.sunlight as sunlight, '
                  'plots.plot_id as plot_id, '
                  'FROM Plant, plots '
-                 'WHERE Plant.pH = plots.pH '
-                 'AND Plant.sunlight = plots.sunlight'
-                 'AND Plant.plant_id = ?')
+                 'WHERE Plant.plant_id = ?')
 
         cur.execute(query, (plant_id,))
+        return row_to_dict_or_none(cur)
+
+    def get_plant_by_name(self, name):
+        """
+        Given a plant's name, return a dictionary representation of the
+        plant, or None if there is no plant with that name.
+
+        :param name: the name of the plant
+        :return: a dict representing the plant
+        """
+        cur = self.conn.cursor()
+
+        query = ('SELECT Plant.plant_id as plant_id, Plant.name as name, '
+                 'Plant.pH as pH, Plant.sunlight as sunlight, '
+                 'plots.plot_id as plot_id, '
+                 'FROM Plant, plots '
+                 'WHERE Plant.name = ?')
+
+        cur.execute(query, (name,))
         return row_to_dict_or_none(cur)
 
     def get_all_plants(self):
@@ -116,8 +135,7 @@ class PlantsDatabase():
         query = ('SELECT Plant.plant_id as plant_id, Plant.name as name, '
                  'Plant.pH as pH, Plant.sunlight as sunlight, '
                  'plots.plot_id as plot_id '
-                 'FROM Plant, pH '
-                 'WHERE Plant.plant_id = pH.plant_id')
+                 'FROM Plant')
 
         plants = []
         cur.execute(query)
@@ -140,7 +158,7 @@ class PlantsDatabase():
         query = 'INSERT INTO plots(sunlight, pH) VALUES(?)'
         cur.execute(query, (sunlight, pH,))
         self.conn.commit()
-        return self.get_plots_by_name(sunlight, pH)
+        return self.get_plots_by_sunlight(sunlight)
 
     def get_all_plots(self):
         """
@@ -200,6 +218,56 @@ class PlantsDatabase():
         cur.execute(query, (pH,))
         return row_to_dict_or_none(cur)
 
+    def insert_fertilizer(self, name, type):
+        """
+        Inserts a fertilizer into the database.
+
+        Returns a dictionary representation of the plant.
+
+        :param name: name of the fertilizer
+        :param type: which nutrient it contains (nitrogen, phosphorus, potassium)
+        :return: a dict representing the fertilizer
+        """
+        cur = self.conn.cursor()
+        query = ('INSERT INTO fertilizer(name, type) '
+                 'VALUES(?, ?)')
+
+        cur.execute(query, (name, type))
+        self.conn.commit()
+
+        return self.get_fertilizer_by_id(cur.lastrowid)
+
+    def get_fertilizer_by_id(self, fertilizer_id):
+        """
+        Get a dictionary representation of the plot with the given primary
+        key. Return None if the plot does not exist.
+
+        :param plot_id: primary key of the plot
+        :return: a dict representing the plot, or None
+        """
+        cur = self.conn.cursor()
+        query = 'SELECT fertilizer_id, Fertilizer FROM Fertilizer WHERE Fertilizer_id = ?'
+        cur.execute(query, (fertilizer_id,))
+        return row_to_dict_or_none(cur)
+
+    def get_fertilizer_by_name(self, name):
+        """
+        Given a fertilizer's name, return a dictionary representation of the
+        fertilizer, or None if there is no fertilizer with that name.
+
+        :param name: the name of the fertilizer
+        :return: a dict representing the plant
+        """
+        cur = self.conn.cursor()
+
+        query = ('SELECT Fertilizer.fertilizer_id as fertilizer_id, Fertilizer.name as name, '
+                 'Fertilizer.type as type. '
+                 'FROM Fertilizer, '
+                 'WHERE Fertilizer.name = ?')
+
+        cur.execute(query, (name,))
+        return row_to_dict_or_none(cur)
+
     def delete_plant(self, plant_id):
         """
         Delete the plant with the given primary key.
@@ -235,10 +303,10 @@ if __name__ == '__main__':
     # not be '__main__', but when it is run explicitly it will be '__main__'.
 
     db = PlantsDatabase('Plants.sqlite')
-    db.insert_plot('full, 7')
-    db.insert_plot('shade, 8')
-    db.insert_plot('partial, 7')
-    db.insert_plot('full, 6')
+    db.insert_plot('7, full')
+    db.insert_plot('8, shade')
+    db.insert_plot('7, partial')
+    db.insert_plot('6, full')
 
     db.insert_plant('Roses, 7, full')
     db.insert_plant('')

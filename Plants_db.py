@@ -1,6 +1,34 @@
+from flask import Flask, g, render_template
 import os
 import sqlite3
+from collections import OrderedDict
 
+app = Flask(__name__)
+
+app.config['DATABASE'] = os.path.join(app.root_path, 'Plants.sqlite')
+
+def connect_db():
+    """
+    Returns a sqlite connection object associated with the application's
+    database file.
+    """
+
+    conn = sqlite3.connect(app.config['DATABASE'])
+    conn.row_factory = sqlite3.Row
+
+    return conn
+
+
+def get_db():
+    """
+    Returns a database connection. If a connection has already been created,
+    the existing connection is used, otherwise it creates a new connection.
+    """
+
+    if not hasattr(g, 'sqlite_db'):
+        g.sqlite_db = connect_db()
+
+    return g.sqlite_db
 
 def row_to_dict_or_none(cur):
     """
@@ -47,18 +75,18 @@ class PlantsDatabase():
     def create_tables(self):
 
         cur = self.conn.cursor()
-        cur.execute('CREATE TABLE Plant(Plant_id INTEGER PRIMARY KEY, '
-                    'name TEXT UNIQUE, '
-                    'pH INTEGER'
-                    'FOREIGN KEY sunlight REFERENCES plots (sunlight)')
-        cur.execute('CREATE TABLE Fertilizer(fertilizer_id INTEGER PRIMARY KEY, '
-                    'name TEXT UNIQUE, '
-                    'type TEXT)')
+        cur.execute('CREATE TABLE fertilizer(fertilizer_id INTEGER PRIMARY KEY, '
+                    'fertilizer_type TEXT UNIQUE)')
         cur.execute('CREATE TABLE plots(plot_id INTEGER PRIMARY KEY, '
-                    'pH INTEGER, '
-                    'sunlight TEXT')
+                     'sunlight TEXT UNIQUE, pH INTEGER, fertilizer_type TEXT, '
+                     'FOREIGN KEY (fertilizer_type) REFERENCES fertilizer(fertilizer_type))')
+        cur.execute('CREATE TABLE Plant(Plant_id INTEGER PRIMARY KEY, '
+                     '   name TEXT UNIQUE, pH INTEGER, fertilizer_type TEXT, sunlight TEXT,'
+                     '   FOREIGN KEY (fertilizer_type) REFERENCES fertilizer(fertilizer_type), '
+                     '   FOREIGN KEY (sunlight) REFERENCES plots(sunlight))')
+        self.conn.commit()
 
-    def insert_plant(self, name, pH, sunlight,):
+    def insert_plant(self, name, pH, fertilizer_type, sunlight,):
         """
         Inserts a plant into the database.
 
@@ -66,25 +94,24 @@ class PlantsDatabase():
 
         :param name: name of the plant
         :param pH: desired soil pH
+        :param fertilizer_type: desired nutrient
         :param sunlight: amount of sunlight needed
         :return: a dict representing the plant
         """
         cur = self.conn.cursor()
-        self.insert_pH(pH)
-        self.insert_plot(sunlight, pH)
-        plot_dict = self.get_plot_by_sunlight(sunlight)
-        plot_id = plot_dict['plot_id']
-        pH_dict = self.get_pH(pH)
+        # self.insert_plot(sunlight, pH, fertilizer_type)
+        # plot_dict = self.get_plots_by_sunlight(sunlight)
+        # sunlight = plot_dict['sunlight']
 
-        query = ('INSERT INTO plant(name, pH, sunlight) '
-                 'VALUES(?, ?, ?)')
+        query = ('INSERT OR IGNORE INTO plant(name, pH, fertilizer_type, sunlight) '
+                 'VALUES(?, ?, ?, ?)')
 
-        cur.execute(query, (name, pH, sunlight))
+        cur.execute(query, (name, pH, fertilizer_type, sunlight))
         self.conn.commit()
 
         return self.get_plant_by_id(cur.lastrowid)
 
-    def get_plant_by_id(self, plant_id):
+    def get_plant_by_id(self, Plant_id):
         """
         Given a plant's primary key, return a dictionary representation of the
         plant, or None if there is no plant with that primary key.
@@ -94,13 +121,9 @@ class PlantsDatabase():
         """
         cur = self.conn.cursor()
 
-        query = ('SELECT Plant.plant_id as plant_id, Plant.name as name, '
-                 'Plant.pH as pH, Plant.sunlight as sunlight, '
-                 'plots.plot_id as plot_id, '
-                 'FROM Plant, plots '
-                 'WHERE Plant.plant_id = ?')
+        query = ('SELECT Plant_id FROM Plant WHERE Plant.Plant_id = ?')
 
-        cur.execute(query, (plant_id,))
+        cur.execute(query, (Plant_id,))
         return row_to_dict_or_none(cur)
 
     def get_plant_by_name(self, name):
@@ -113,13 +136,24 @@ class PlantsDatabase():
         """
         cur = self.conn.cursor()
 
-        query = ('SELECT Plant.plant_id as plant_id, Plant.name as name, '
-                 'Plant.pH as pH, Plant.sunlight as sunlight, '
-                 'plots.plot_id as plot_id, '
-                 'FROM Plant, plots '
-                 'WHERE Plant.name = ?')
+        query = ('SELECT Plant_id, name FROM Plant WHERE Plant.name = ?')
 
         cur.execute(query, (name,))
+        return row_to_dict_or_none(cur)
+
+    def get_plant_by_fertilzer(self, fertilizer_type):
+        """
+        Given a fertilizer, return a dictionary representation of the
+        plants, or None if there is no plant with that nutrient.
+
+        :param fertilizer_type: the nutrient the plant needs
+        :return: a dict representing the plant
+        """
+        cur = self.conn.cursor()
+
+        query = ('SELECT Plant.fertilizer_type FROM Plant WHERE Plant.fertilizer_type = ?')
+
+        cur.execute(query, (fertilizer_type,))
         return row_to_dict_or_none(cur)
 
     def get_all_plants(self):
@@ -132,10 +166,7 @@ class PlantsDatabase():
 
         cur = self.conn.cursor()
 
-        query = ('SELECT Plant.plant_id as plant_id, Plant.name as name, '
-                 'Plant.pH as pH, Plant.sunlight as sunlight, '
-                 'plots.plot_id as plot_id '
-                 'FROM Plant')
+        query = ('SELECT * FROM Plant')
 
         plants = []
         cur.execute(query)
@@ -143,20 +174,24 @@ class PlantsDatabase():
         for row in cur.fetchall():
             plants.append(dict(row))
 
+        print(plants)
         return plants
 
-    def insert_plot(self, sunlight, pH):
+    def insert_plot(self, sunlight, pH, fertilizer_type):
         """
         Insert a plot into the database if it does not exist.
         Return a dict representation of the plot.
 
         :param sunlight: amount of sun the plot receives
+        :param fertilizer_type: fertilizer used on the plot
         :param pH: pH of the soil in the plot
         :return: dict representing the plot
         """
         cur = self.conn.cursor()
-        query = 'INSERT INTO plots(sunlight, pH) VALUES(?)'
-        cur.execute(query, (sunlight, pH,))
+        self.insert_fertilizer(fertilizer_type)
+        query = ('INSERT OR IGNORE INTO plots(sunlight, pH, fertilizer_type) '
+                ' VALUES(?, ?, ?)')
+        cur.execute(query, (sunlight, pH, fertilizer_type))
         self.conn.commit()
         return self.get_plots_by_sunlight(sunlight)
 
@@ -177,9 +212,10 @@ class PlantsDatabase():
         for row in cur.fetchall():
             plots.append(dict(row))
 
+        print (plots)
         return plots
 
-    def get_plots_by_id(self, plot_id):
+    def get_plot_by_id(self, plot_id):
         """
         Get a dictionary representation of the plot with the given primary
         key. Return None if the plot does not exist.
@@ -188,7 +224,7 @@ class PlantsDatabase():
         :return: a dict representing the plot, or None
         """
         cur = self.conn.cursor()
-        query = 'SELECT plot_id, plots FROM plots WHERE plot_id = ?'
+        query = 'SELECT plot_id FROM plots WHERE plot_id = ?'
         cur.execute(query, (plot_id,))
         return row_to_dict_or_none(cur)
 
@@ -201,7 +237,7 @@ class PlantsDatabase():
         :return: a dict representing the plot, or None
         """
         cur = self.conn.cursor()
-        query = 'SELECT plot_id, plots FROM plots WHERE sunlight = ?'
+        query = 'SELECT plot_id, sunlight FROM plots WHERE sunlight = ?'
         cur.execute(query, (sunlight,))
         return row_to_dict_or_none(cur)
 
@@ -214,61 +250,85 @@ class PlantsDatabase():
         :return: a dict representing the plot, or None
         """
         cur = self.conn.cursor()
-        query = 'SELECT plot_id, plots FROM plots WHERE pH = ?'
+        query = 'SELECT plot_id, pH FROM plots WHERE pH = ?'
         cur.execute(query, (pH,))
         return row_to_dict_or_none(cur)
 
-    def insert_fertilizer(self, name, type):
+    def get_plots_by_fertilizer(self, fertilizer_type):
+        """
+        Get a dictionary representation of the plots with the given fertilzer.
+        Return None if there is no such fertilizer.
+
+        :param fertilizer_type: fertilizer used on the plot
+        :return: a dict representing the plot, or None
+        """
+        cur = self.conn.cursor()
+        query = 'SELECT plot_id, fertilizer_type FROM plots WHERE fertilizer_type = ?'
+        cur.execute(query, (fertilizer_type,))
+        return row_to_dict_or_none(cur)
+
+    def insert_fertilizer(self, fertilizer_type):
         """
         Inserts a fertilizer into the database.
 
         Returns a dictionary representation of the plant.
-
-        :param name: name of the fertilizer
-        :param type: which nutrient it contains (nitrogen, phosphorus, potassium)
+        :param fertilizer_typetype: which nutrient it contains (nitrogen, phosphorus, potassium)
         :return: a dict representing the fertilizer
         """
         cur = self.conn.cursor()
-        query = ('INSERT INTO fertilizer(name, type) '
-                 'VALUES(?, ?)')
-
-        cur.execute(query, (name, type))
+        query = 'INSERT OR IGNORE INTO fertilizer(fertilizer_type) VALUES(?)'
+        cur.execute(query, (fertilizer_type,))
         self.conn.commit()
-
         return self.get_fertilizer_by_id(cur.lastrowid)
+
+    def get_all_fertilizer(self):
+        """
+               Get a list of dictionary representations of all the plots in the
+               database.
+
+               :return: list of dicts representing all plots
+               """
+        cur = self.conn.cursor()
+
+        query = 'SELECT * FROM fertilizer'
+
+        fertilizer = []
+        cur.execute(query)
+
+        for row in cur.fetchall():
+            fertilizer.append(dict(row))
+
+        print(fertilizer)
+        return fertilizer
+
 
     def get_fertilizer_by_id(self, fertilizer_id):
         """
-        Get a dictionary representation of the plot with the given primary
-        key. Return None if the plot does not exist.
+        Get a dictionary representation of the fertilizer with the given primary
+        key. Return None if the fertilizer does not exist.
 
-        :param plot_id: primary key of the plot
-        :return: a dict representing the plot, or None
+        :param fertilizer_id: primary key of the fertilizer
+        :return: a dict representing the fertilizer, or None
         """
         cur = self.conn.cursor()
-        query = 'SELECT fertilizer_id, Fertilizer FROM Fertilizer WHERE Fertilizer_id = ?'
+        query = 'SELECT fertilizer_id, fertilizer_type FROM fertilizer WHERE Fertilizer_id = ?'
         cur.execute(query, (fertilizer_id,))
         return row_to_dict_or_none(cur)
 
-    def get_fertilizer_by_name(self, name):
+    def get_fertilizer_by_type(self, fertilizer_type):
         """
-        Given a fertilizer's name, return a dictionary representation of the
-        fertilizer, or None if there is no fertilizer with that name.
+        Get a dictionary representation of the fertilizer type.
+        Return None if the plot does not exist.
 
-        :param name: the name of the fertilizer
-        :return: a dict representing the plant
+        :param fertilizer_type: type of fertilizer
+        :return: a dict representing the fertilizer, or None
         """
         cur = self.conn.cursor()
-
-        query = ('SELECT Fertilizer.fertilizer_id as fertilizer_id, Fertilizer.name as name, '
-                 'Fertilizer.type as type. '
-                 'FROM Fertilizer, '
-                 'WHERE Fertilizer.name = ?')
-
-        cur.execute(query, (name,))
+        query = 'SELECT fertilizer_type, fertilizer_id FROM fertilizer WHERE Fertilizer_type = ?'
+        cur.execute(query, (fertilizer_type,))
         return row_to_dict_or_none(cur)
 
-    def delete_plant(self, plant_id):
+    def delete_plant(self, Plant_id):
         """
         Delete the plant with the given primary key.
 
@@ -277,9 +337,8 @@ class PlantsDatabase():
 
         cur = self.conn.cursor()
 
-        query = 'DELETE FROM Plant WHERE plant_id = ?,' \
-                'DELETE FROM pH WHERE plant_id = ?'
-        cur.execute(query, (plant_id,))
+        query = 'DELETE FROM Plant WHERE Plant_id = ?,'
+        cur.execute(query, (Plant_id,))
 
         self.conn.commit()
 
@@ -292,6 +351,24 @@ class PlantsDatabase():
 
         self.conn.commit()
 
+    def delete_fertilizer(self, fertilizer_id):
+
+        cur = self.conn.cursor()
+
+        query = 'DELETE FROM fertilizer WHERE fertilizer_id = ?,'
+        cur.execute(query, (fertilizer_id,))
+
+        self.conn.commit()
+
+    # def delete_pH(self, pH_id):
+    #
+    #     cur = self.conn.cursor()
+    #
+    #     query = 'DELETE FROM pH WHERE pH_id = ?,'
+    #     cur.execute(query, (pH_id))
+    #
+    #     self.conn.commit()
+
 
 if __name__ == '__main__':
     # Here are some rudimentary tests to make sure that it is possible to
@@ -301,24 +378,32 @@ if __name__ == '__main__':
     # explicitly run this file, and will not be run when the Flask app runs.
     # This is because when the code from this file is imported, __name__ will
     # not be '__main__', but when it is run explicitly it will be '__main__'.
-
     db = PlantsDatabase('Plants.sqlite')
-    db.insert_plot('7, full')
-    db.insert_plot('8, shade')
-    db.insert_plot('7, partial')
-    db.insert_plot('6, full')
+    db.insert_fertilizer('potassium')
+    db.insert_fertilizer('nitrogen')
+    db.insert_fertilizer('phosphate')
 
-    db.insert_plant('Roses, 7, full')
-    db.insert_plant('')
+    db.insert_plot('full', '7', 'potassium')
+    db.insert_plot('shade', '8', 'nitrogen')
+    db.insert_plot('partial', '7', 'phosphate')
+    db.insert_plot('full', '6', 'nitrogen')
+
+    db.insert_plant('Roses', '7', 'potassium', 'full')
+    db.insert_plant('Bleeding Hearts', '6', 'phosphate', 'shade')
+    db.insert_plant('Peony', '8', 'nitrogen', 'partial')
+
+    plants = db.get_all_plants()
+    print('List of all plants:', plants)
+
 
     plots = db.get_all_plots()
     print('List of all plots:', plots)
 
-    plot = db.get_plots_by_id(1)
+    plot = db.get_plot_by_id(1)
     print('plot with ID 1:', plot)
 
     plot = db.get_plots_by_pH(7)
     print('plots with pH 7:', plot)
 
     plot = db.get_plots_by_sunlight('full')
-    print('plots with full sunlight')
+    print('plots with full sunlight', plot)
